@@ -1,46 +1,111 @@
 # Part B - Grounded RAG Evaluation Harness
 
-A lightweight CLI and local HTTP service for evaluating grounded answers from an LLM/RAG-style endpoint.
+A lightweight CLI and local HTTP service for evaluating grounded answers from an
+LLM/RAG-style endpoint.
 
-This Part B implementation is designed to complement Part A.
-
-- Part A defines the retrieval and answer pipeline: `BM25 + FAISS -> RRF -> reranker -> grounded answer`.
-- Part B acts as the acceptance layer for that design: it checks answer quality, source grounding, abstention behavior, and failure buckets that point to likely next actions.
-
-The project stays intentionally small:
+This implementation is intentionally small and submission-friendly:
 
 - stdlib-only scoring and HTTP client/server
-- JSONL knowledge base instead of a full retrieval stack
-- JSONL eval suites instead of a database or dashboard
-- structured JSON artifacts that can be saved after each run
+- JSONL fixtures instead of a full retrieval stack
+- structured eval summaries for release-gating and diagnostics
+- explicit grounding and abstention checks to complement Part A
 
-Bundled inputs live in `data/`. Generated eval outputs can be written to `results/`, which is gitignored.
+## Quickstart
+
+From the repo root:
+
+```bash
+cd part-b
+uv sync --extra dev
+```
+
+Run the automated verification suite:
+
+```bash
+uv run pytest tests/ -v
+```
+
+Start the local backend:
+
+```bash
+uv run task dev
+```
+
+In another terminal, call the local endpoint:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is the annual leave policy?"}'
+```
+
+Run the positive suite through the backend:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/eval
+```
+
+Run the diagnostic suite through the backend:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/eval \
+  -H "Content-Type: application/json" \
+  -d '{"tests":"tests_diagnostic.jsonl"}'
+```
+
+Generate local artifacts from the CLI:
+
+```bash
+mkdir -p results
+
+uv run eval-harness data/tests_positive.jsonl \
+  --endpoint kb:data/knowledge_base.jsonl \
+  --output json \
+  --save results/positive.json
+
+uv run eval-harness data/tests_diagnostic.jsonl \
+  --endpoint kb:data/knowledge_base.jsonl \
+  --output json \
+  --save results/diagnostic.json
+```
+
+The `tests` override is restricted to the configured test directory, so the
+backend only accepts JSONL files from `part-b/data/` by default.
 
 ---
 
-## What This Simulates
+## What To Review
 
-Part A describes a grounded internal document Q&A system. Part B does not rebuild the full production retrieval stack. Instead, it simulates the outer contract that the eval layer cares about:
+If I were reviewing this as an interviewer, I would read in this order:
+
+1. `part-b/README.md` for system shape and tradeoffs
+2. `part-b/main.py` for the HTTP contract
+3. `part-b/harness/runner.py` for verdict logic and failure buckets
+4. `part-b/harness/endpoint.py` for the simulated grounded endpoint
+5. `part-b/data/` for the bundled knowledge base and test suites
+6. `part-b/tests/` for behavioral coverage
+
+---
+
+## Why This Exists
+
+Part A defines the serving design:
 
 ```text
-user query -> endpoint -> answer + cited sources -> eval summary
+BM25 + FAISS -> RRF -> reranker -> grounded answer
 ```
 
-`data/knowledge_base.jsonl` stands in for indexed internal documents. `KnowledgeBaseEndpoint` performs simple keyword retrieval over those records and returns:
+Part B complements that design by acting as the acceptance layer.
 
-- an `answer`
-- a list of cited `sources`
+The main questions it answers are:
 
-If retrieval confidence is too weak, the endpoint returns a canonical abstention:
+- was the answer correct enough for release
+- was it grounded in an expected source
+- did it abstain when the KB should not answer
+- if it failed, was it an answer, grounding, or runtime problem
 
-```json
-{
-  "answer": "I don't know based on the provided documents.",
-  "sources": []
-}
-```
-
-That lets the harness measure whether the system abstains cleanly instead of hallucinating.
+That keeps Part B aligned with the real failure surface of Part A rather than
+turning it into a generic text-matching harness.
 
 ---
 
@@ -100,60 +165,145 @@ HTTP EVAL FLOW
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ stdout / sample_results*.json                                        │
+│ stdout / results/*.json                                              │
 │ pass rate, grounding rate, failure buckets, anomalies, per-test rows │
 └──────────────────────────────────────────────────────────────────────┘
 
 CLI EVAL ARTIFACT FLOW
 ┌──────────────────────────────────────────────────────────────────────┐
-│ uv run eval-harness data/tests_positive.jsonl --endpoint kb:...       │
-│   --save results/positive.json                                        │
+│ uv run eval-harness data/tests_positive.jsonl --endpoint kb:...      │
+│   --save results/positive.json                                       │
 │ Same runner/scorer path, without starting the HTTP server            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Why This Complements Part A
+## Evaluation Strategy
 
-Part A is concerned with retrieval quality, grounding, and monthly KB refreshes.
+The harness uses two bundled suites:
 
-That means the most useful eval questions are not just:
+- `data/tests_positive.jsonl`: release-gating checks
+- `data/tests_diagnostic.jsonl`: robustness and grounding probes
 
-- did the answer text roughly match
+The positive suite is the gate.
 
-They are also:
-
-- did the answer come from an expected source
-- did the system abstain when the KB should not answer
-- if it failed, was it an answer problem, a grounding problem, or a runtime problem
-
-This harness keeps those signals small and actionable without introducing heavy eval infrastructure.
-
----
-
-## Positive And Diagnostic Suites
-
-The repo ships two suites.
-
-- `data/tests_positive.jsonl`: positive release-gating suite
-- `data/tests_diagnostic.jsonl`: diagnostic suite for robustness and grounding checks
-
-The positive suite is the acceptance gate.
-
-The diagnostic suite is not meant to be a pure pass/fail release blocker. It is meant to surface useful failure modes such as:
+The diagnostic suite exists to surface useful failure modes such as:
 
 - unknown queries that should abstain
-- correct answers grounded in the wrong source document
+- correct answer text grounded in the wrong document
 - current-vs-archived policy confusion
 
-This mirrors the real Part A risk profile more closely than a generic “wrong expected answer” test set.
+This is a better fit for Part A than a purely black-box answer-only test set.
+
+### Endpoint Contract
+
+`POST /generate` accepts:
+
+```json
+{ "prompt": "What is the annual leave policy?" }
+```
+
+It returns:
+
+```json
+{
+  "answer": "Employees receive 14 days annual leave per calendar year.",
+  "sources": ["HR/2026/leave-policy.md"]
+}
+```
+
+If retrieval confidence is too weak, the endpoint returns a canonical
+abstention:
+
+```json
+{
+  "answer": "I don't know based on the provided documents.",
+  "sources": []
+}
+```
+
+`POST /eval` runs the configured suite through the same endpoint behavior and
+returns the structured eval summary.
+
+Optional diagnostic override:
+
+```json
+{ "tests": "tests_diagnostic.jsonl" }
+```
+
+Routes:
+
+- `GET /health`
+- `POST /generate`
+- `POST /eval`
+
+### Verdict Model
+
+Answer text scoring remains intentionally lightweight and reproducible.
+
+Metrics:
+
+- `exact_match`
+- `answer_coverage`
+- `keyword_f1`
+- `sequence_similarity`
+
+Thresholds:
+
+- `exact_match >= 1.0`
+- `answer_coverage >= 1.0`
+- `keyword_f1 >= 0.6`
+- `sequence_similarity >= 0.7`
+
+An `answer` case passes when:
+
+- the answer text clears one lexical threshold
+- and at least one expected source matches when source expectations exist
+
+An `abstain` case passes when the endpoint returns the canonical abstention
+answer.
+
+### Failure Buckets
+
+Misses are grouped into a small actionable set:
+
+- `answer_mismatch`
+- `source_mismatch`
+- `abstain_miss`
+- `endpoint_error`
+
+These buckets are meant to suggest the next investigation step:
+
+- `answer_mismatch` with correct source suggests prompt/generation issues
+- `source_mismatch` suggests retrieval or reranking issues
+- `abstain_miss` suggests retrieval-threshold or grounding-policy issues
+- `endpoint_error` suggests service/runtime problems
+
+### Summary Output
+
+The JSON summary includes:
+
+- total tests
+- passed / failed / endpoint errors
+- pass rate
+- grounding rate
+- abstention success rate
+- counts by failure bucket
+- anomalies
+- per-test answer, sources, expected sources, scores, latency, and reason
 
 ---
 
-## Test Schema
+## Data Layout
 
-The harness accepts the original take-home shape:
+`data/` contains the bundled inputs for this take-home:
+
+- `knowledge_base.jsonl`: simulated internal documents
+- `tests_positive.jsonl`: release-gating checks
+- `tests_diagnostic.jsonl`: grounding and abstention probes
+
+The harness still accepts the original take-home JSONL shape:
 
 ```json
 {
@@ -163,7 +313,7 @@ The harness accepts the original take-home shape:
 }
 ```
 
-It also supports a slightly richer typed schema used by the bundled suites:
+The bundled suites use a slightly richer typed schema:
 
 ```json
 {
@@ -194,199 +344,22 @@ Fields:
 - `case_type`: `answer` or `abstain` (defaults to `answer`)
 - `expected_answer`: expected answer text for `answer` cases
 - `expected_sources`: acceptable cited source paths
-- `tags`: optional labels for later filtering or inspection
+- `tags`: optional labels for filtering or inspection
 
----
-
-## Endpoint Contract
-
-`POST /generate` accepts:
-
-```json
-{ "prompt": "What is the annual leave policy?" }
-```
-
-It returns:
-
-```json
-{
-  "answer": "Employees receive 14 days annual leave per calendar year.",
-  "sources": ["HR/2026/leave-policy.md"]
-}
-```
-
-`POST /eval` runs the configured suite through the same endpoint behavior and returns the structured eval summary.
-
-Optional diagnostic suite override:
-
-```json
-{ "tests": "tests_diagnostic.jsonl" }
-```
-
-Routes:
-
-- `GET /health`
-- `POST /generate`
-- `POST /eval`
-
----
-
-## Scoring And Verdicts
-
-Answer text scoring remains intentionally lightweight and fully reproducible.
-
-Metrics:
-
-- `exact_match`
-- `answer_coverage`
-- `keyword_f1`
-- `sequence_similarity`
-
-Thresholds:
-
-- `exact_match >= 1.0`
-- `answer_coverage >= 1.0`
-- `keyword_f1 >= 0.6`
-- `sequence_similarity >= 0.7`
-
-An `answer` case passes when:
-
-- the answer text passes one of the lexical thresholds
-- and at least one expected source matches when `expected_sources` are provided
-
-An `abstain` case passes when the endpoint returns the canonical abstention answer.
-
----
-
-## Failure Buckets
-
-The summary classifies misses into a small actionable set:
-
-- `answer_mismatch`: text did not meet the answer thresholds
-- `source_mismatch`: answer text was acceptable, but the cited source was not an expected one
-- `abstain_miss`: the system should have abstained but answered anyway
-- `endpoint_error`: runtime or transport failure
-
-These buckets help separate likely next steps:
-
-- `answer_mismatch` with correct source suggests prompt/generation issues
-- `source_mismatch` suggests retrieval or reranking issues
-- `abstain_miss` suggests retrieval-threshold or grounding-policy issues
-- `endpoint_error` suggests service/runtime problems
-
----
-
-## Summary Output
-
-The JSON summary includes:
-
-- total tests
-- passed / failed / endpoint errors
-- pass rate
-- grounding rate
-- abstention success rate
-- counts by failure bucket
-- anomalies
-- per-test answer, sources, expected sources, scores, latency, and reason
-
-This makes the saved artifact useful for:
-
-- release/UAT decisions on the positive suite
-- diagnostic inspection on the negative suite
-- comparing eval artifacts after monthly knowledge-base refreshes
-
----
-
-## Quickstart
-
-From the repo root:
-
-```bash
-cd part-b
-uv sync --extra dev
-```
-
-Run the automated verification suite:
-
-```bash
-uv run pytest tests/ -v
-```
-
-Start the local backend:
-
-```bash
-uv run task dev
-```
-
-In another terminal, call the local endpoint:
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt":"What is the annual leave policy?"}'
-```
-
-Run the positive suite through the backend:
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/eval
-```
-
-Run the diagnostic suite through the backend:
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/eval \
-  -H "Content-Type: application/json" \
-  -d '{"tests":"tests_diagnostic.jsonl"}'
-```
-
-The `tests` override is restricted to the configured test directory, so the backend only accepts JSONL files from `part-b/data/` by default.
-
-Generate the same positive artifact from the CLI:
-
-```bash
-mkdir -p results
-
-uv run eval-harness data/tests_positive.jsonl \
-  --endpoint kb:data/knowledge_base.jsonl \
-  --output json \
-  --save results/positive.json
-```
-
-Generate the diagnostic artifact from the CLI:
-
-```bash
-uv run eval-harness data/tests_diagnostic.jsonl \
-  --endpoint kb:data/knowledge_base.jsonl \
-  --output json \
-  --save results/diagnostic.json
-```
-
-No manual virtualenv activation is needed. `uv` reads `pyproject.toml`, installs the package, exposes the `eval-harness`, `eval-endpoint`, and `task` entrypoints, and runs commands inside the project environment.
+`results/` is intentionally not committed. Use it for local eval artifacts
+generated from CLI or `/eval` runs.
 
 ---
 
 ## Endpoint Modes
 
-- `kb:data/knowledge_base.jsonl`: local simulated grounded endpoint for this submission
+- `kb:data/knowledge_base.jsonl`: local simulated grounded endpoint
 - `mock` or `mock:fixed`: always returns the same response
 - `mock:echo`: echoes the input query
 - `mock:random`: returns random HR-like keywords
 - `mock:fail`: simulates endpoint failure handling
 - `mock:timeout`: simulates timeout handling
-- `http://...` or `https://...`: calls a real endpoint, including the local `main.py` service
-
----
-
-## Data Directory
-
-`data/` contains the small bundled dataset used by this take-home:
-
-- `knowledge_base.jsonl`: simulated internal documents
-- `tests_positive.jsonl`: release-gating checks
-- `tests_diagnostic.jsonl`: grounding and abstention probes
-
-`results/` is intentionally not committed. Use it for local eval artifacts generated from CLI or `/eval` runs.
+- `http://...` or `https://...`: calls a real endpoint, including `main.py`
 
 ---
 
@@ -423,6 +396,6 @@ part-b/
 ## With More Time
 
 - add retrieval candidate debug fields when evaluating a real Part A endpoint
-- store multiple historical artifacts and diff them across monthly KB rebuilds
-- expand the suites by department, query type, and time-sensitive policy changes
+- store historical artifacts and diff them across monthly KB rebuilds
+- expand the suites by department, query type, and time-sensitive changes
 - add semantic similarity as a secondary scorer for harder paraphrases
