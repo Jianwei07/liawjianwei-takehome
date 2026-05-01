@@ -69,6 +69,7 @@ def _json_summary(summary: RunSummary) -> str:
                     "exact_match": r.score.exact_match,
                     "keyword_f1": round(r.score.keyword_f1, 4),
                     "sequence_similarity": round(r.score.sequence_similarity, 4),
+                    "semantic_sim": round(r.score.semantic_sim, 4) if r.score.semantic_sim is not None else None,
                 }
                 if r.score
                 else None,
@@ -130,6 +131,14 @@ examples:
         action="store_true",
         help="Print per-test PASS/FAIL/ERROR as tests run",
     )
+    parser.add_argument(
+        "--save",
+        metavar="FILE",
+        nargs="?",
+        const="results.json",
+        default=None,
+        help="Save full JSON results to FILE (default: results.json)",
+    )
 
     args = parser.parse_args()
 
@@ -165,6 +174,11 @@ examples:
         print(_json_summary(summary))
     else:
         print(_text_summary(summary))
+
+    if args.save:
+        with open(args.save, "w", encoding="utf-8") as fh:
+            fh.write(_json_summary(summary))
+        print(f"\nResults saved → {args.save}", file=sys.stderr)
 
     if summary.failed > 0 or summary.errors > 0:
         sys.exit(1)

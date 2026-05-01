@@ -14,8 +14,10 @@ from harness.scorer import (
     exact_match,
     keyword_f1,
     sequence_similarity,
+    semantic_sim,
     score,
     THRESHOLDS,
+    _SEMANTIC_AVAILABLE,
 )
 from harness.runner import load_test_cases
 
@@ -162,9 +164,51 @@ class TestScore:
         assert 0.0 <= result.exact_match <= 1.0
         assert 0.0 <= result.keyword_f1 <= 1.0
         assert 0.0 <= result.sequence_similarity <= 1.0
+        # semantic_sim is float if sentence-transformers installed, else None
+        if result.semantic_sim is not None:
+            assert 0.0 <= result.semantic_sim <= 1.0
 
     def test_both_empty(self):
         result = score("q1", "", "")
+        assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# semantic_sim
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticSim:
+    def test_returns_none_or_float(self):
+        result = semantic_sim("annual leave policy", "leave entitlement")
+        assert result is None or 0.0 <= result <= 1.0
+
+    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
+    def test_identical_strings_score_near_one(self):
+        s = semantic_sim("annual leave is 14 days", "annual leave is 14 days")
+        assert s > 0.99
+
+    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
+    def test_same_meaning_different_wording_passes_threshold(self):
+        # "two weeks" vs "14 days": zero keyword overlap, same meaning.
+        # all-MiniLM-L6-v2 scores this ~0.687, threshold is 0.65.
+        s = semantic_sim("employees receive two weeks of annual leave", "14 days annual leave")
+        assert s >= THRESHOLDS["semantic_sim"]
+
+    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
+    def test_unrelated_strings_score_low(self):
+        s = semantic_sim("the weather is sunny today", "annual leave is 14 days")
+        assert s < THRESHOLDS["semantic_sim"]
+
+    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
+    def test_empty_response_returns_zero(self):
+        assert semantic_sim("", "14 days annual leave") == 0.0
+
+    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
+    def test_score_passes_on_semantic_when_lexical_fails(self):
+        # "two weeks" fails keyword_f1 and sequence_similarity against "14 days"
+        # but semantic_sim should push it to PASS
+        result = score("q1", "staff are entitled to two weeks of leave per year", "14 days annual leave")
         assert result.passed
 
 

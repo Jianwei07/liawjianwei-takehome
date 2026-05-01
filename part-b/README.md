@@ -1,16 +1,112 @@
 # Part B — LLM Evaluation Harness
 
-A CLI tool that runs structured test cases against an LLM endpoint, scores each response with multiple complementary mechanisms, and produces a structured summary of pass rate, failures, and anomalies.
+A CLI tool that evaluates whether an LLM endpoint answers correctly, built to simulate evaluating the Part A Q&A system.
+
+`sample_results.json` — pre-generated output. Open it to see what the harness produces without running anything.
 
 ---
 
-## What it does
+## What this simulates
 
-1. **Reads** a JSONL test file (`{"id": "...", "input": "...", "expected": "..."}`)
-2. **Calls** a configurable endpoint — mock (no network) or a real HTTP LLM API
-3. **Scores** each response with three mechanisms (see Scoring below)
-4. **Outputs** a summary: pass rate, per-failure reasons, anomaly flags
-5. **Handles** malformed input and endpoint errors gracefully — bad lines are reported with line numbers; endpoint failures are recorded per-test without crashing the run
+Part A describes a RAG pipeline: HR-policy documents → BM25 + FAISS retrieval → RRF fusion → cross-encoder reranker → LLM answer via vLLM.
+
+This harness treats that pipeline as a black box. It sends queries to the endpoint, receives answers, and scores them against ground-truth expectations — the same HR-policy questions the Part A system is designed to answer.
+
+```
+sample_tests.jsonl
+  │
+  │  {"id": "q1", "input": "What is the annual leave policy?",
+  │               "expected": "14 days annual leave"}
+  ▼
+runner.load_test_cases()           ← validates JSONL, collects all errors upfront
+  │
+  ▼
+endpoint.call(input)               ← MockEndpoint (fixed / random / echo / fail)
+  │                                   HttpEndpoint → Part A FastAPI service
+  ▼
+scorer.score(response, expected)   ← exact_match, keyword_f1, sequence_similarity
+  │
+  ▼
+RunSummary                         ← pass rate, per-failure reasons, anomalies
+  │
+  ├── stdout (text or JSON)
+  └── results.json (--save flag)
+```
+
+---
+
+## Architecture — why four files
+
+The harness is split so each module has exactly one responsibility:
+
+```
+cli.py       user interface — argparse, output formatting, exit codes
+runner.py    orchestration  — load → call → score → collect → detect anomalies
+scorer.py    math only      — three scoring functions, pure stdlib, no I/O
+endpoint.py  I/O only       — mock stub and real HTTP, unified error type
+```
+
+**Why this separation matters:**
+
+`scorer.py` has no I/O and no argparse dependency — it can be unit-tested directly with no mocking. All 33 unit tests target this file alone.
+
+`runner.py` knows nothing about HTTP or CLI arguments. Swapping `MockEndpoint` for `HttpEndpoint` (the real Part A service) requires zero changes to the runner.
+
+`cli.py` contains no business logic. Changing output format (text vs JSON) requires zero changes to scorer or runner.
+
+`demo.py` drives the entire harness programmatically by importing `runner` and `endpoint` directly — it never touches `cli.py`. This proves the architecture: the CLI is just one consumer of the core logic, not the core itself.
+
+---
+
+## Scoring — why three mechanisms and how each works
+
+LLM responses are never verbatim. "14 days annual leave" and "You are entitled to 14 days of annual leave per year" are both correct answers. A single scoring mechanism would reject one of them.
+
+A test **passes** if **any one** mechanism meets its threshold. OR logic reduces false negatives without requiring a heavy ML dependency.
+
+### 1. `exact_match` — threshold 1.0
+
+Normalise both strings (lowercase, strip punctuation, collapse whitespace), then compare equality. Binary: 1.0 or 0.0.
+
+Catches verbatim correct answers. Too strict for natural LLM output on its own — but costs nothing to compute and catches the easy case first.
+
+### 2. `keyword_f1` — threshold 0.6
+
+Tokenise both strings, remove stopwords, compute F1 on the resulting keyword sets:
+
+```
+precision = matched_keywords / response_keywords   ← penalises hallucinated terms
+recall    = matched_keywords / expected_keywords   ← penalises missing terms
+F1        = 2 × precision × recall / (precision + recall)
+```
+
+Why F1 and not just recall: recall alone rewards dumping every possible keyword ("the leave policy manager HR team 14 days 30 days reimbursement…"). Precision penalises that. F1 is the balance between covering required terms and not hallucinating extras.
+
+Threshold 0.6: below 0.6, too many key terms are missing or replaced to consider the answer correct. Above 0.8 would reject valid paraphrases.
+
+### 3. `sequence_similarity` — threshold 0.7
+
+`difflib.SequenceMatcher.ratio()` = `2 × matching_characters / total_characters`. Finds longest common subsequences and scores structural similarity.
+
+Catches near-identical answers with minor word differences that keyword_f1 would penalise — e.g. "within 30 days of the expense" vs "within 30 days of incurring the expense".
+
+### Anomaly detection
+
+Beyond per-test scoring, the runner flags three system-level signals:
+
+- **Empty responses** — vLLM returns empty string on OOM or context overflow. Without this flag, it would show as a normal FAIL, hiding the real cause.
+- **All responses identical** — every non-error response is the same string. Signals a stuck endpoint or caching bug. Fires on `mock:fixed` by design — confirms the detection works.
+- **Latency > 10s** — signals GPU pressure or a queued request in the Part A serving stack.
+
+---
+
+## Error handling
+
+**Malformed JSONL:** `load_test_cases()` collects all parse errors before raising. If lines 2 and 47 are both broken, you see both in one run — not one at a time.
+
+**Endpoint failures:** `EndpointError` is the single exception type both `MockEndpoint` and `HttpEndpoint` raise. `runner.py` catches only `EndpointError` — it records the failure per test and continues. One bad request never crashes the run. Exit code 1 signals CI that errors occurred.
+
+Why a unified exception: `HttpEndpoint` can throw `urllib.error.HTTPError`, `urllib.error.URLError`, or `TimeoutError`. If `runner.py` caught all three, adding a new endpoint type would require changing the runner. `EndpointError` is the contract — runner never needs to know what it's talking to.
 
 ---
 
@@ -18,70 +114,24 @@ A CLI tool that runs structured test cases against an LLM endpoint, scores each 
 
 ```bash
 cd part-b
+uv venv && uv pip install -e ".[dev]"
+source .venv/bin/activate
 
-# Create venv and install (creates `eval-harness` command)
-uv venv
-uv pip install -e ".[dev]"
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# Run against the sample file using the default mock endpoint
-eval-harness sample_tests.jsonl
-
-# Verbose: print PASS/FAIL/ERROR per test as they run
+# Run with mock endpoint (no network)
 eval-harness sample_tests.jsonl --verbose
 
-# JSON output (machine-readable, useful for CI)
-eval-harness sample_tests.jsonl --output json
+# Save full JSON results to file
+eval-harness sample_tests.jsonl --save results.json
 
-# Different mock modes
-eval-harness sample_tests.jsonl --endpoint mock:random
-eval-harness sample_tests.jsonl --endpoint mock:fail   # all tests → ERROR
+# Run against real Part A endpoint
+eval-harness sample_tests.jsonl --endpoint http://localhost:8080/generate --verbose
 
-# Real HTTP endpoint
-eval-harness sample_tests.jsonl --endpoint http://localhost:8080/generate
+# Interactive walkthrough (scoring demo, mock modes, Part C diagnostic)
+uv run python demo.py
 
-# Run unit tests
+# Unit tests
 uv run pytest tests/ -v
 ```
-
-### Without installing (run as a module)
-
-```bash
-cd part-b
-uv run python -m harness.cli sample_tests.jsonl --verbose
-```
-
----
-
-## Scoring
-
-Three mechanisms are applied to every response. A test **passes** if **any one** meets its threshold.
-
-| Mechanism | How it works | Threshold | Why |
-|---|---|---|---|
-| **Exact match** | Normalised string equality (lowercase, strip punctuation, collapse whitespace) | 1.0 | Catches precisely correct factual answers (e.g. "14 days annual leave") |
-| **Keyword F1** | Precision/recall/F1 over non-stopword token sets | ≥ 0.6 | Handles natural paraphrases where the key facts are present but phrasing differs |
-| **Sequence similarity** | `difflib.SequenceMatcher` ratio on normalised strings | ≥ 0.7 | Catches near-correct responses with minor word differences |
-
-**Rationale for "any one passes" logic:** LLM responses are rarely verbatim. A response that contains all the right keywords but adds a polite prefix ("Certainly! The answer is…") should still pass. Using the union of mechanisms reduces false negatives without requiring a heavy semantic model.
-
-**Anomaly detection** flags:
-- Empty responses
-- All responses identical across different inputs (stuck endpoint)
-- Responses taking > 10 seconds
-
----
-
-## Endpoint modes
-
-| Flag | Behaviour |
-|---|---|
-| `mock` (default) | Returns a fixed stub string |
-| `mock:echo` | Echoes the input prompt (triggers anomaly: identical responses) |
-| `mock:random` | Returns random HR-domain keywords |
-| `mock:fail` | Raises an endpoint error for every call |
-| `mock:timeout` | Simulates a timeout error |
-| `http://...` | Calls a real endpoint (POST, JSON body `{"prompt": "..."}`) |
 
 ---
 
@@ -89,36 +139,28 @@ Three mechanisms are applied to every response. A test **passes** if **any one**
 
 ```
 part-b/
+├── sample_results.json    — pre-generated output (read without running)
+├── sample_tests.jsonl     — 5 HR-policy test cases (aligned with Part A)
+├── demo.py                — programmatic walkthrough, no CLI required
 ├── harness/
-│   ├── cli.py        — argparse CLI, argument parsing, output formatting
-│   ├── runner.py     — JSONL loading, test loop, anomaly detection
-│   ├── scorer.py     — exact_match, keyword_f1, sequence_similarity
-│   └── endpoint.py   — MockEndpoint, HttpEndpoint, EndpointError
-├── tests/
-│   └── test_scorer.py — unit tests (normalize, exact_match, keyword_f1,
-│                          sequence_similarity, score, load_test_cases)
-├── sample_tests.jsonl — 5 HR-policy test cases
-├── pyproject.toml    — package config + entry point
-└── requirements.txt  — pytest only; runtime has zero third-party deps
+│   ├── cli.py             — user interface only, no business logic
+│   ├── runner.py          — orchestration: load, call, score, anomaly detect
+│   ├── scorer.py          — three scoring functions, pure stdlib
+│   └── endpoint.py        — MockEndpoint (5 modes) + HttpEndpoint
+└── tests/
+    └── test_scorer.py     — 33 unit tests covering all scoring edge cases
 ```
 
 ---
 
-## Assumptions
+## What I would add with more time
 
-- Python 3.11+ (uses `list[...]` / `set[...]` type hints without `from __future__ import annotations`)
-- The real HTTP endpoint accepts `POST {"prompt": "..."}` and returns one of: `{"response": "..."}`, `{"choices": [{"message": {"content": "..."}}]}`, or `{"text": "..."}`
-- "Snappy" scoring is intentionally done without heavy ML dependencies (no `sentence-transformers`, `nltk`, etc.) to keep the harness portable and fast
-- Keyword F1 threshold of 0.6 reflects a pragmatic choice: too low (0.4) accepts nonsense answers; too high (0.8) penalises valid paraphrases
-- Test IDs in the JSONL file are treated as opaque strings — no uniqueness enforcement
+**RAGAS integration** — RAGAS provides RAG-specific metrics (faithfulness, context precision/recall) that require access to the retrieved chunks, not just the final answer. The current harness is a black-box scorer; RAGAS is a white-box RAG evaluator. Both are needed: this harness catches regressions, RAGAS diagnoses which layer broke.
 
----
+**Semantic similarity as a fourth mechanism** — cosine similarity via `all-MiniLM-L6-v2` (local, no cloud). Captures meaning overlap without exact keyword matching. Zero cloud dependency, compatible with the air-gapped Part A environment.
 
-## What I'd add with more time
+**Async concurrency** — run test cases in parallel against the endpoint. Relevant for large suites against a real vLLM endpoint where throughput matters.
 
-1. **Semantic similarity scoring** using a local embedding model (e.g. `sentence-transformers/all-MiniLM-L6-v2`) — cosine similarity > 0.75 as a fourth mechanism for capturing meaning without exact keyword overlap
-2. **Async concurrency** — run multiple test cases in parallel against the endpoint for faster evaluation of large suites
-3. **Configurable thresholds** — pass thresholds as CLI flags or a YAML config file so teams can tune them per-project
-4. **HTML report** — richer output with per-test score breakdowns, sortable tables, trend charts across multiple runs
-5. **Retry with backoff** — automatic retry on transient endpoint errors (5xx, timeout) with exponential backoff
-6. **Streaming support** — handle Server-Sent Events / streaming responses from vLLM-style endpoints
+**Configurable thresholds via YAML** — teams tune scoring thresholds per-project without touching code. Current values (kf1 ≥ 0.6, ss ≥ 0.7) are starting points that should be calibrated against a labelled golden set.
+
+**HTML report with trend tracking** — per-test score breakdown stored in local SQLite across runs. A drop in keyword_f1 after a monthly rebuild — before users notice — is the Part C early warning signal.
