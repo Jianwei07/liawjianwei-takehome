@@ -1,13 +1,14 @@
-# Part B - Grounded RAG Evaluation Harness
+# Part B - Grounded RAG Evaluation Service
 
-A lightweight CLI and local HTTP service for evaluating grounded answers from an
-LLM/RAG-style endpoint.
+A small HTTP backend that runs JSONL evaluation suites against a grounded
+answering endpoint and returns a structured JSON summary.
 
-This implementation is intentionally small and submission-friendly:
+This stays intentionally small and submission-friendly:
 
-- stdlib-only scoring and HTTP client/server
+- one backend service, no separate CLI workflow
+- stdlib-only scoring and HTTP server/client
 - JSONL fixtures instead of a full retrieval stack
-- structured eval summaries for release-gating and diagnostics
+- structured summaries for release-gating and diagnostics
 - explicit grounding and abstention checks to complement Part A
 
 ## Quickstart
@@ -31,7 +32,7 @@ Start the local backend:
 uv run task dev
 ```
 
-In another terminal, call the local endpoint:
+In another terminal, ask one grounded question:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/generate \
@@ -39,44 +40,54 @@ curl -s -X POST http://127.0.0.1:8080/generate \
   -d '{"prompt":"What is the annual leave policy?"}'
 ```
 
-Run the positive suite through the backend:
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/eval
-```
-
-Run the diagnostic suite through the backend:
-
-```bash
-curl -s -X POST http://127.0.0.1:8080/eval \
-  -H "Content-Type: application/json" \
-  -d '{"tests":"tests_diagnostic.jsonl"}'
-```
-
-Generate local artifacts from the CLI:
+Save the positive eval summary as a JSON artifact:
 
 ```bash
 mkdir -p results
 
-uv run eval-harness data/tests_positive.jsonl \
-  --endpoint kb:data/knowledge_base.jsonl \
-  --output json \
-  --save results/positive.json
+curl -s -X POST http://127.0.0.1:8080/eval \
+  -o results/positive.json
+```
 
-uv run eval-harness data/tests_diagnostic.jsonl \
-  --endpoint kb:data/knowledge_base.jsonl \
-  --output json \
-  --save results/diagnostic.json
+Save the diagnostic eval summary as a JSON artifact:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/eval \
+  -H "Content-Type: application/json" \
+  -d '{"tests":"tests_diagnostic.jsonl"}' \
+  -o results/diagnostic.json
+```
+
+Inspect the saved output:
+
+```bash
+cat results/positive.json
+cat results/diagnostic.json
 ```
 
 The `tests` override is restricted to the configured test directory, so the
 backend only accepts JSONL files from `part-b/data/` by default.
 
+## Expected Output
+
+`POST /generate` returns one answer payload:
+
+```json
+{
+  "answer": "Employees receive 14 days annual leave per calendar year.",
+  "sources": ["HR/2026/leave-policy.md"]
+}
+```
+
+`POST /eval` returns one structured JSON summary. `curl` prints it to stdout by
+default; `curl -o <file>` persists it as an artifact.
+
 ---
 
 ## What To Review
 
-If I were reviewing this as an interviewer, I would read in this order:
+If I were reviewing this submission as an interviewer, I would read in this
+order:
 
 1. `part-b/README.md` for system shape and tradeoffs
 2. `part-b/main.py` for the HTTP contract
@@ -116,9 +127,9 @@ pyproject.toml
 ├─ uv sync --extra dev
 ├─ uv run pytest tests/ -v       -> automated verification
 ├─ uv run task dev               -> start backend on port 8080
-├─ curl -X POST /eval            -> run backend eval
-├─ uv run eval-harness ...       -> CLI eval alternative
-└─ uv run eval-endpoint ...      -> backend with custom options
+├─ curl -X POST /generate        -> one grounded answer
+├─ curl -X POST /eval            -> eval summary JSON
+└─ curl -o results/*.json        -> saved local artifacts
 
 AUTOMATED VERIFICATION
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -154,9 +165,9 @@ HTTP EVAL FLOW
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │ harness/endpoint.py                                                  │
-│ kb:... -> KnowledgeBaseEndpoint                                      │
-│ http://... -> HttpEndpoint                                           │
-│ mock:* -> diagnostic endpoint behavior                               │
+│ KnowledgeBaseEndpoint -> grounded answer or abstain                  │
+│ HttpEndpoint          -> real upstream endpoint adapter              │
+│ MockEndpoint          -> diagnostic endpoint behavior                │
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -168,20 +179,13 @@ HTTP EVAL FLOW
 │ stdout / results/*.json                                              │
 │ pass rate, grounding rate, failure buckets, anomalies, per-test rows │
 └──────────────────────────────────────────────────────────────────────┘
-
-CLI EVAL ARTIFACT FLOW
-┌──────────────────────────────────────────────────────────────────────┐
-│ uv run eval-harness data/tests_positive.jsonl --endpoint kb:...      │
-│   --save results/positive.json                                       │
-│ Same runner/scorer path, without starting the HTTP server            │
-└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Evaluation Strategy
 
-The harness uses two bundled suites:
+The service uses two bundled suites:
 
 - `data/tests_positive.jsonl`: release-gating checks
 - `data/tests_diagnostic.jsonl`: robustness and grounding probes
@@ -196,47 +200,17 @@ The diagnostic suite exists to surface useful failure modes such as:
 
 This is a better fit for Part A than a purely black-box answer-only test set.
 
-### Endpoint Contract
-
-`POST /generate` accepts:
-
-```json
-{ "prompt": "What is the annual leave policy?" }
-```
-
-It returns:
-
-```json
-{
-  "answer": "Employees receive 14 days annual leave per calendar year.",
-  "sources": ["HR/2026/leave-policy.md"]
-}
-```
-
-If retrieval confidence is too weak, the endpoint returns a canonical
-abstention:
-
-```json
-{
-  "answer": "I don't know based on the provided documents.",
-  "sources": []
-}
-```
-
-`POST /eval` runs the configured suite through the same endpoint behavior and
-returns the structured eval summary.
-
-Optional diagnostic override:
-
-```json
-{ "tests": "tests_diagnostic.jsonl" }
-```
-
-Routes:
+### Backend Routes
 
 - `GET /health`
 - `POST /generate`
 - `POST /eval`
+
+`POST /eval` accepts the default positive suite, or a diagnostic override:
+
+```json
+{ "tests": "tests_diagnostic.jsonl" }
+```
 
 ### Verdict Model
 
@@ -347,19 +321,7 @@ Fields:
 - `tags`: optional labels for filtering or inspection
 
 `results/` is intentionally not committed. Use it for local eval artifacts
-generated from CLI or `/eval` runs.
-
----
-
-## Endpoint Modes
-
-- `kb:data/knowledge_base.jsonl`: local simulated grounded endpoint
-- `mock` or `mock:fixed`: always returns the same response
-- `mock:echo`: echoes the input query
-- `mock:random`: returns random HR-like keywords
-- `mock:fail`: simulates endpoint failure handling
-- `mock:timeout`: simulates timeout handling
-- `http://...` or `https://...`: calls a real endpoint, including `main.py`
+generated from `/eval` responses.
 
 ---
 
@@ -380,7 +342,6 @@ part-b/
 │   └── .gitkeep
 ├── harness/
 │   ├── __init__.py
-│   ├── cli.py
 │   ├── endpoint.py
 │   ├── reporting.py
 │   ├── runner.py

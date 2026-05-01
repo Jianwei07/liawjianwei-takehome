@@ -5,12 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "eval-harness"
 version = "0.1.0"
-description = "Lightweight LLM evaluation harness for JSONL test suites"
+description = "Lightweight HTTP evaluation service for JSONL test suites"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-eval-harness = "harness.cli:main"
 eval-endpoint = "main:main"
 task = "main:task"
 
