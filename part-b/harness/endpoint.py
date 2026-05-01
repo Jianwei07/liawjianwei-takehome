@@ -2,6 +2,7 @@
 Endpoint abstractions for the eval harness.
 
 MockEndpoint  — in-process stub; no network required.
+KnowledgeBaseEndpoint — simulates a tiny RAG endpoint over a JSONL knowledge base.
 HttpEndpoint  — calls a real HTTP LLM API (OpenAI-compatible or plain JSON).
 
 All endpoint failures raise EndpointError so the runner can handle them
@@ -10,6 +11,7 @@ uniformly without catching urllib internals.
 
 import json
 import random
+import re
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -60,6 +62,102 @@ class MockEndpoint:
         if self.mode == "timeout":
             raise EndpointError("Request timed out after 30s (mode=timeout)")
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+_STOP = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "to", "of", "in",
+    "on", "at", "by", "for", "with", "what", "who", "when", "where", "how",
+    "does", "do", "per",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"\w+", text.lower()) if t not in _STOP}
+
+
+class KnowledgeBaseEndpoint:
+    """
+    Simulates a tiny RAG endpoint over a JSONL knowledge base.
+
+    Each line must contain:
+      {"id": "...", "source": "...", "text": "...", "answer": "..."}
+
+    The endpoint retrieves the record with the largest keyword overlap against
+    the query, then returns its answer with a lightweight source citation.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self._records: list[dict[str, str | set[str]]] = []
+        parse_errors: list[str] = []
+
+        with open(path, encoding="utf-8") as fh:
+            for lineno, raw in enumerate(fh, start=1):
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    parse_errors.append(f"Line {lineno}: invalid JSON - {exc}")
+                    continue
+
+                missing = [
+                    k for k in ("id", "source", "text", "answer") if k not in obj
+                ]
+                if missing:
+                    parse_errors.append(f"Line {lineno}: missing field(s) {missing}")
+                    continue
+
+                bad_fields = [
+                    k for k in ("id", "source", "text", "answer")
+                    if not isinstance(obj[k], str) or not obj[k].strip()
+                ]
+                if bad_fields:
+                    parse_errors.append(
+                        f"Line {lineno}: field(s) must be non-empty strings: {bad_fields}"
+                    )
+                    continue
+
+                self._records.append(
+                    {
+                        "id": obj["id"],
+                        "source": obj["source"],
+                        "answer": obj["answer"],
+                        "tokens": _tokens(
+                            " ".join(
+                                [obj["id"], obj["source"], obj["text"], obj["answer"]]
+                            )
+                        ),
+                    }
+                )
+
+        if parse_errors:
+            raise EndpointError(
+                "Malformed knowledge base file:\n" + "\n".join(parse_errors)
+            )
+        if not self._records:
+            raise EndpointError(f"Knowledge base file has no records: {path!r}")
+
+    def call(self, prompt: str) -> str:
+        query_tokens = _tokens(prompt)
+        if not query_tokens:
+            raise EndpointError("Query has no searchable terms")
+
+        best_record = None
+        best_score = 0
+        for record in self._records:
+            score = len(query_tokens & record["tokens"])
+            if score > best_score:
+                best_score = score
+                best_record = record
+
+        if best_record is None:
+            raise EndpointError(
+                f"No relevant knowledge-base record for prompt: {prompt!r}"
+            )
+
+        return f"{best_record['answer']} Source: {best_record['source']}."
 
 
 class HttpEndpoint:

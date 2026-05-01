@@ -12,14 +12,14 @@ from harness.scorer import (
     Score,
     normalize,
     exact_match,
+    answer_coverage,
     keyword_f1,
     sequence_similarity,
-    semantic_sim,
     score,
     THRESHOLDS,
-    _SEMANTIC_AVAILABLE,
 )
-from harness.runner import load_test_cases
+from harness.endpoint import MockEndpoint, KnowledgeBaseEndpoint
+from harness.runner import load_test_cases, run
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,24 @@ class TestKeywordF1:
 
 
 # ---------------------------------------------------------------------------
+# answer_coverage
+# ---------------------------------------------------------------------------
+
+
+class TestAnswerCoverage:
+    def test_verbose_correct_answer_covers_expected_keywords(self):
+        coverage = answer_coverage(
+            "According to the policy, employees receive 14 days annual leave per year.",
+            "14 days annual leave",
+        )
+        assert coverage == pytest.approx(1.0)
+
+    def test_missing_expected_keyword_is_partial(self):
+        coverage = answer_coverage("Employees receive annual leave.", "14 days annual leave")
+        assert 0.0 < coverage < 1.0
+
+
+# ---------------------------------------------------------------------------
 # sequence_similarity
 # ---------------------------------------------------------------------------
 
@@ -162,53 +180,12 @@ class TestScore:
         assert isinstance(result, Score)
         assert result.test_id == "q1"
         assert 0.0 <= result.exact_match <= 1.0
+        assert 0.0 <= result.answer_coverage <= 1.0
         assert 0.0 <= result.keyword_f1 <= 1.0
         assert 0.0 <= result.sequence_similarity <= 1.0
-        # semantic_sim is float if sentence-transformers installed, else None
-        if result.semantic_sim is not None:
-            assert 0.0 <= result.semantic_sim <= 1.0
 
     def test_both_empty(self):
         result = score("q1", "", "")
-        assert result.passed
-
-
-# ---------------------------------------------------------------------------
-# semantic_sim
-# ---------------------------------------------------------------------------
-
-
-class TestSemanticSim:
-    def test_returns_none_or_float(self):
-        result = semantic_sim("annual leave policy", "leave entitlement")
-        assert result is None or 0.0 <= result <= 1.0
-
-    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
-    def test_identical_strings_score_near_one(self):
-        s = semantic_sim("annual leave is 14 days", "annual leave is 14 days")
-        assert s > 0.99
-
-    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
-    def test_same_meaning_different_wording_passes_threshold(self):
-        # "two weeks" vs "14 days": zero keyword overlap, same meaning.
-        # all-MiniLM-L6-v2 scores this ~0.687, threshold is 0.65.
-        s = semantic_sim("employees receive two weeks of annual leave", "14 days annual leave")
-        assert s >= THRESHOLDS["semantic_sim"]
-
-    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
-    def test_unrelated_strings_score_low(self):
-        s = semantic_sim("the weather is sunny today", "annual leave is 14 days")
-        assert s < THRESHOLDS["semantic_sim"]
-
-    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
-    def test_empty_response_returns_zero(self):
-        assert semantic_sim("", "14 days annual leave") == 0.0
-
-    @pytest.mark.skipif(not _SEMANTIC_AVAILABLE, reason="sentence-transformers not installed")
-    def test_score_passes_on_semantic_when_lexical_fails(self):
-        # "two weeks" fails keyword_f1 and sequence_similarity against "14 days"
-        # but semantic_sim should push it to PASS
-        result = score("q1", "staff are entitled to two weeks of leave per year", "14 days annual leave")
         assert result.passed
 
 
@@ -253,6 +230,20 @@ class TestLoadTestCases:
         with pytest.raises(ValueError, match="missing field"):
             load_test_cases(path)
 
+    def test_non_string_fields_raise(self):
+        path = self._write_jsonl([
+            '{"id": 1, "input": "hello", "expected": "world"}',
+        ])
+        with pytest.raises(ValueError, match="non-empty strings"):
+            load_test_cases(path)
+
+    def test_empty_fields_raise(self):
+        path = self._write_jsonl([
+            '{"id": "q1", "input": "   ", "expected": "world"}',
+        ])
+        with pytest.raises(ValueError, match="non-empty strings"):
+            load_test_cases(path)
+
     def test_multiple_errors_reported_together(self):
         path = self._write_jsonl([
             "not json at all",
@@ -267,3 +258,58 @@ class TestLoadTestCases:
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             load_test_cases("/nonexistent/path/file.jsonl")
+
+
+# ---------------------------------------------------------------------------
+# runner + endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestPipeline:
+    def _write_jsonl(self, lines: list[str]) -> str:
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines))
+        return path
+
+    def test_knowledge_base_endpoint_returns_sourced_answer(self):
+        kb_path = self._write_jsonl([
+            '{"id": "kb1", "source": "HR/leave.md", "text": "Annual leave policy gives 14 days annual leave.", "answer": "Employees receive 14 days annual leave."}',
+        ])
+        endpoint = KnowledgeBaseEndpoint(kb_path)
+        response = endpoint.call("What is the annual leave policy?")
+        assert "14 days annual leave" in response
+        assert "Source: HR/leave.md" in response
+
+    def test_knowledge_base_run_passes_verbose_answers(self):
+        kb_path = self._write_jsonl([
+            '{"id": "kb1", "source": "HR/leave.md", "text": "Annual leave policy gives 14 days annual leave.", "answer": "Employees receive 14 days annual leave."}',
+            '{"id": "kb2", "source": "Finance/travel.md", "text": "Travel claims are approved by the direct manager.", "answer": "Travel claims are approved by the direct manager."}',
+        ])
+        path = self._write_jsonl([
+            '{"id": "q1", "input": "What is the annual leave policy?", "expected": "14 days annual leave"}',
+            '{"id": "q2", "input": "Who approves travel claims?", "expected": "Direct manager"}',
+        ])
+        summary = run(path, KnowledgeBaseEndpoint(kb_path))
+        assert summary.total == 2
+        assert summary.passed == 2
+        assert summary.failed == 0
+        assert summary.errors == 0
+
+    def test_endpoint_failure_records_errors(self):
+        path = self._write_jsonl([
+            '{"id": "q1", "input": "What is leave?", "expected": "14 days"}',
+        ])
+        summary = run(path, MockEndpoint(mode="fail"))
+        assert summary.total == 1
+        assert summary.errors == 1
+        assert "Simulated endpoint failure" in summary.results[0].error
+
+    def test_fixed_mock_triggers_identical_response_anomaly(self):
+        path = self._write_jsonl([
+            '{"id": "q1", "input": "a", "expected": "x"}',
+            '{"id": "q2", "input": "b", "expected": "y"}',
+        ])
+        summary = run(path, MockEndpoint(mode="fixed"))
+        assert summary.failed == 2
+        assert any("identical" in anomaly for anomaly in summary.anomalies)

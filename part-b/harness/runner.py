@@ -5,7 +5,7 @@ detects anomalies, and returns a structured RunSummary.
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from .endpoint import EndpointError
@@ -68,6 +68,16 @@ def load_test_cases(path: str) -> list[TestCase]:
             if missing:
                 parse_errors.append(
                     f"Line {lineno}: missing field(s) {missing}"
+                )
+                continue
+
+            bad_fields = [
+                k for k in ("id", "input", "expected")
+                if not isinstance(obj[k], str) or not obj[k].strip()
+            ]
+            if bad_fields:
+                parse_errors.append(
+                    f"Line {lineno}: field(s) must be non-empty strings: {bad_fields}"
                 )
                 continue
 

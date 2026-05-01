@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 
-from .endpoint import MockEndpoint, HttpEndpoint
+from .endpoint import EndpointError, HttpEndpoint, KnowledgeBaseEndpoint, MockEndpoint
 from .runner import run, RunSummary
 
 
@@ -67,9 +67,9 @@ def _json_summary(summary: RunSummary) -> str:
                 "latency_ms": round(r.latency_ms, 1),
                 "scores": {
                     "exact_match": r.score.exact_match,
+                    "answer_coverage": round(r.score.answer_coverage, 4),
                     "keyword_f1": round(r.score.keyword_f1, 4),
                     "sequence_similarity": round(r.score.sequence_similarity, 4),
-                    "semantic_sim": round(r.score.semantic_sim, 4) if r.score.semantic_sim is not None else None,
                 }
                 if r.score
                 else None,
@@ -93,11 +93,12 @@ endpoint formats:
   mock:random        random HR-domain keywords
   mock:fail          simulates endpoint failure
   mock:timeout       simulates request timeout
+  kb:path.jsonl      simulate a RAG endpoint over a JSONL knowledge base
   http://host/path   real HTTP endpoint (POST, JSON body)
   https://host/path  real HTTPS endpoint
 
 examples:
-  eval-harness sample_tests.jsonl
+  eval-harness sample_tests.jsonl --endpoint kb:sample_knowledge_base.jsonl --verbose
   eval-harness sample_tests.jsonl --endpoint mock:random --verbose
   eval-harness sample_tests.jsonl --endpoint http://localhost:8080/generate --output json
         """,
@@ -151,12 +152,19 @@ examples:
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
+    elif ep_str.startswith("kb:"):
+        kb_path = ep_str.split(":", 1)[1]
+        try:
+            endpoint = KnowledgeBaseEndpoint(kb_path)
+        except (FileNotFoundError, EndpointError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
     elif ep_str.startswith(("http://", "https://")):
         endpoint = HttpEndpoint(ep_str, timeout=args.timeout, api_key=args.api_key)
     else:
         print(
             f"Error: unrecognised endpoint {ep_str!r}. "
-            "Use 'mock', 'mock:<mode>', or an http(s):// URL.",
+            "Use 'mock', 'mock:<mode>', 'kb:<path>', or an http(s):// URL.",
             file=sys.stderr,
         )
         sys.exit(1)

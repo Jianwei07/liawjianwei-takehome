@@ -1,75 +1,80 @@
 {
   "total": 5,
-  "passed": 0,
-  "failed": 5,
+  "passed": 5,
+  "failed": 0,
   "errors": 0,
-  "pass_rate": 0.0,
+  "pass_rate": 1.0,
   "anomalies": [],
   "results": [
     {
       "id": "q1",
-      "passed": false,
-      "response": "14 days extension HR team manager",
+      "passed": true,
+      "response": "Employees receive 14 days annual leave per calendar year. Source: HR/2026/leave-policy.md.",
       "error": null,
       "latency_ms": 0.0,
       "scores": {
         "exact_match": 0.0,
-        "keyword_f1": 0.4,
-        "sequence_similarity": 0.5283
+        "answer_coverage": 1.0,
+        "keyword_f1": 0.4444,
+        "sequence_similarity": 0.3738
       },
-      "reason": "all below threshold \u2014 exact=0.00, kf1=0.40, seq=0.53"
+      "reason": "answer coverage=1.00"
     },
     {
       "id": "q2",
-      "passed": false,
-      "response": "reimbursement 14 days direct report",
+      "passed": true,
+      "response": "Travel claims are approved by the direct manager. Source: Finance/2026/travel-claims.md.",
       "error": null,
       "latency_ms": 0.0,
       "scores": {
         "exact_match": 0.0,
-        "keyword_f1": 0.2857,
-        "sequence_similarity": 0.3265
+        "answer_coverage": 1.0,
+        "keyword_f1": 0.3636,
+        "sequence_similarity": 0.2828
       },
-      "reason": "all below threshold \u2014 exact=0.00, kf1=0.29, seq=0.33"
+      "reason": "answer coverage=1.00"
     },
     {
       "id": "q3",
-      "passed": false,
-      "response": "14 days HR team approved",
+      "passed": true,
+      "response": "Expense submissions are due within 30 days of incurring the expense. Source: Finance/2026/expense-submission.md.",
       "error": null,
       "latency_ms": 0.0,
       "scores": {
         "exact_match": 0.0,
-        "keyword_f1": 0.2,
-        "sequence_similarity": 0.4127
+        "answer_coverage": 1.0,
+        "keyword_f1": 0.5882,
+        "sequence_similarity": 0.527
       },
-      "reason": "all below threshold \u2014 exact=0.00, kf1=0.20, seq=0.41"
+      "reason": "answer coverage=1.00"
     },
     {
       "id": "q4",
-      "passed": false,
-      "response": "policy manager reimbursement 14 days",
+      "passed": true,
+      "response": "The maximum meal reimbursement is 50 dollars per day. Source: Finance/2026/meal-reimbursement.md.",
       "error": null,
       "latency_ms": 0.0,
       "scores": {
         "exact_match": 0.0,
-        "keyword_f1": 0.0,
-        "sequence_similarity": 0.3333
+        "answer_coverage": 1.0,
+        "keyword_f1": 0.5333,
+        "sequence_similarity": 0.3214
       },
-      "reason": "all below threshold \u2014 exact=0.00, kf1=0.00, seq=0.33"
+      "reason": "answer coverage=1.00"
     },
     {
       "id": "q5",
-      "passed": false,
-      "response": "direct report manager 14 days 30 days",
+      "passed": true,
+      "response": "The IT helpdesk contact number is extension 4357. Source: IT/2026/helpdesk.md.",
       "error": null,
       "latency_ms": 0.0,
       "scores": {
         "exact_match": 0.0,
-        "keyword_f1": 0.0,
-        "sequence_similarity": 0.1569
+        "answer_coverage": 1.0,
+        "keyword_f1": 0.4,
+        "sequence_similarity": 0.3146
       },
-      "reason": "all below threshold \u2014 exact=0.00, kf1=0.00, seq=0.16"
+      "reason": "answer coverage=1.00"
     }
   ]
 }
