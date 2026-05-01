@@ -12,73 +12,11 @@ Exit codes
 """
 
 import argparse
-import json
 import sys
 
 from .endpoint import EndpointError, HttpEndpoint, KnowledgeBaseEndpoint, MockEndpoint
-from .runner import run, RunSummary
-
-
-def _text_summary(summary: RunSummary) -> str:
-    lines = [
-        "=" * 52,
-        "EVAL HARNESS — SUMMARY",
-        "=" * 52,
-        f"Total:     {summary.total}",
-        f"Passed:    {summary.passed}",
-        f"Failed:    {summary.failed}",
-        f"Errors:    {summary.errors}",
-        f"Pass rate: {summary.pass_rate:.1%}",
-    ]
-
-    if summary.anomalies:
-        lines.append("\nANOMALIES DETECTED:")
-        for a in summary.anomalies:
-            lines.append(f"  ! {a}")
-
-    failures = [r for r in summary.results if not r.passed]
-    if failures:
-        lines.append("\nFAILURES:")
-        for r in failures:
-            lines.append(f"  [{r.test_id}]")
-            if r.error:
-                lines.append(f"    Error:    {r.error}")
-            else:
-                lines.append(f"    Response: {r.response!r}")
-                lines.append(f"    Reason:   {r.score.reason}")
-
-    return "\n".join(lines)
-
-
-def _json_summary(summary: RunSummary) -> str:
-    payload = {
-        "total": summary.total,
-        "passed": summary.passed,
-        "failed": summary.failed,
-        "errors": summary.errors,
-        "pass_rate": round(summary.pass_rate, 4),
-        "anomalies": summary.anomalies,
-        "results": [
-            {
-                "id": r.test_id,
-                "passed": r.passed,
-                "response": r.response,
-                "error": r.error,
-                "latency_ms": round(r.latency_ms, 1),
-                "scores": {
-                    "exact_match": r.score.exact_match,
-                    "answer_coverage": round(r.score.answer_coverage, 4),
-                    "keyword_f1": round(r.score.keyword_f1, 4),
-                    "sequence_similarity": round(r.score.sequence_similarity, 4),
-                }
-                if r.score
-                else None,
-                "reason": r.score.reason if r.score else r.error,
-            }
-            for r in summary.results
-        ],
-    }
-    return json.dumps(payload, indent=2)
+from .reporting import summary_to_json, summary_to_text
+from .runner import run
 
 
 def main() -> None:
@@ -179,13 +117,13 @@ examples:
         sys.exit(1)
 
     if args.output == "json":
-        print(_json_summary(summary))
+        print(summary_to_json(summary))
     else:
-        print(_text_summary(summary))
+        print(summary_to_text(summary))
 
     if args.save:
         with open(args.save, "w", encoding="utf-8") as fh:
-            fh.write(_json_summary(summary))
+            fh.write(summary_to_json(summary))
         print(f"\nResults saved → {args.save}", file=sys.stderr)
 
     if summary.failed > 0 or summary.errors > 0:

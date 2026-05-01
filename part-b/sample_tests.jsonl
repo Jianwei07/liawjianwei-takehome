@@ -1,5 +1,7 @@
-{"id": "q1", "input": "What is the annual leave policy?", "expected": "14 days annual leave"}
-{"id": "q2", "input": "Who approves travel claims?", "expected": "Direct manager"}
-{"id": "q3", "input": "What is the deadline for expense submissions?", "expected": "Within 30 days of incurring the expense"}
-{"id": "q4", "input": "What is the maximum meal reimbursement per day?", "expected": "50 dollars per day"}
-{"id": "q5", "input": "What is the IT helpdesk contact number?", "expected": "Extension 4357"}
+{"id": "p1_leave_policy", "input": "What is the annual leave policy?", "case_type": "answer", "expected_answer": "14 days annual leave", "expected_sources": ["HR/2026/leave-policy.md"], "tags": ["positive", "policy"]}
+{"id": "p2_travel_claims", "input": "Who approves travel claims before reimbursement?", "case_type": "answer", "expected_answer": "Direct manager", "expected_sources": ["Finance/2026/travel-claims.md"], "tags": ["positive", "travel"]}
+{"id": "p3_expense_deadline", "input": "What is the deadline for expense submissions?", "case_type": "answer", "expected_answer": "Within 30 days of incurring the expense", "expected_sources": ["Finance/2026/expense-submission.md"], "tags": ["positive", "finance"]}
+{"id": "p4_meal_reimbursement", "input": "What is the maximum meal reimbursement per day?", "case_type": "answer", "expected_answer": "50 dollars per day", "expected_sources": ["Finance/2026/meal-reimbursement.md"], "tags": ["positive", "finance"]}
+{"id": "p5_helpdesk_contact", "input": "What is the IT helpdesk contact number?", "case_type": "answer", "expected_answer": "Extension 4357", "expected_sources": ["IT/2026/helpdesk.md"], "tags": ["positive", "it"]}
+{"id": "p6_leave_paraphrase", "input": "How many annual leave days do full-time employees receive each year?", "case_type": "answer", "expected_answer": "14 days annual leave", "expected_sources": ["HR/2026/leave-policy.md"], "tags": ["positive", "policy", "paraphrase"]}
+{"id": "p7_helpdesk_paraphrase", "input": "Which extension reaches the IT helpdesk contact line?", "case_type": "answer", "expected_answer": "Extension 4357", "expected_sources": ["IT/2026/helpdesk.md"], "tags": ["positive", "it", "paraphrase"]}

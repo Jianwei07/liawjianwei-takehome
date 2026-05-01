@@ -1,0 +1,6 @@
+{"id": "d1_unknown_dental", "input": "What is the dental benefits allowance?", "case_type": "abstain", "tags": ["diagnostic", "unknown"]}
+{"id": "d2_unknown_parking", "input": "What is the overnight parking reimbursement policy?", "case_type": "abstain", "tags": ["diagnostic", "unknown"]}
+{"id": "d3_travel_grounding", "input": "Which manager approves domestic travel claims?", "case_type": "answer", "expected_answer": "Direct manager", "expected_sources": ["Finance/2026/travel-claims.md"], "tags": ["diagnostic", "grounding", "travel"]}
+{"id": "d4_leave_refresh_grounding", "input": "What is the current annual leave entitlement after the 2026 refresh?", "case_type": "answer", "expected_answer": "14 days annual leave", "expected_sources": ["HR/2026/leave-policy.md"], "tags": ["diagnostic", "grounding", "policy"]}
+{"id": "d5_archived_leave", "input": "What was the archived annual leave entitlement before the 2026 refresh?", "case_type": "answer", "expected_answer": "12 days annual leave", "expected_sources": ["HR/2024/leave-policy-archive.md"], "tags": ["diagnostic", "historical", "policy"]}
+{"id": "d6_helpdesk_grounding", "input": "What extension should staff call for IT support?", "case_type": "answer", "expected_answer": "Extension 4357", "expected_sources": ["IT/2026/helpdesk.md"], "tags": ["diagnostic", "grounding", "it"]}

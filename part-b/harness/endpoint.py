@@ -14,7 +14,18 @@ import random
 import re
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Optional
+
+
+ABSTAIN_ANSWER = "I don't know based on the provided documents."
+MIN_KEYWORD_OVERLAP = 2
+
+
+@dataclass(frozen=True)
+class EndpointResponse:
+    answer: str
+    sources: list[str]
 
 
 class EndpointError(Exception):
@@ -49,14 +60,17 @@ class MockEndpoint:
         self.mode = mode
         self.fixed_response = fixed_response
 
-    def call(self, prompt: str) -> str:
+    def call(self, prompt: str) -> EndpointResponse:
         if self.mode == "fixed":
-            return self.fixed_response
+            return EndpointResponse(answer=self.fixed_response, sources=[])
         if self.mode == "echo":
-            return prompt
+            return EndpointResponse(answer=prompt, sources=[])
         if self.mode == "random":
             k = random.randint(2, min(4, len(self._HR_WORDS)))
-            return " ".join(random.sample(self._HR_WORDS, k=k))
+            return EndpointResponse(
+                answer=" ".join(random.sample(self._HR_WORDS, k=k)),
+                sources=[],
+            )
         if self.mode == "fail":
             raise EndpointError("Simulated endpoint failure (mode=fail)")
         if self.mode == "timeout":
@@ -139,10 +153,10 @@ class KnowledgeBaseEndpoint:
         if not self._records:
             raise EndpointError(f"Knowledge base file has no records: {path!r}")
 
-    def call(self, prompt: str) -> str:
+    def call(self, prompt: str) -> EndpointResponse:
         query_tokens = _tokens(prompt)
         if not query_tokens:
-            raise EndpointError("Query has no searchable terms")
+            return EndpointResponse(answer=ABSTAIN_ANSWER, sources=[])
 
         best_record = None
         best_score = 0
@@ -152,12 +166,14 @@ class KnowledgeBaseEndpoint:
                 best_score = score
                 best_record = record
 
-        if best_record is None:
-            raise EndpointError(
-                f"No relevant knowledge-base record for prompt: {prompt!r}"
-            )
+        # A single generic token match is too weak to count as grounded retrieval.
+        if best_record is None or best_score < MIN_KEYWORD_OVERLAP:
+            return EndpointResponse(answer=ABSTAIN_ANSWER, sources=[])
 
-        return f"{best_record['answer']} Source: {best_record['source']}."
+        return EndpointResponse(
+            answer=str(best_record["answer"]),
+            sources=[str(best_record["source"])],
+        )
 
 
 class HttpEndpoint:
@@ -178,7 +194,7 @@ class HttpEndpoint:
         self.timeout = timeout
         self.api_key = api_key
 
-    def call(self, prompt: str) -> str:
+    def call(self, prompt: str) -> EndpointResponse:
         payload = json.dumps({"prompt": prompt}).encode()
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
@@ -196,14 +212,62 @@ class HttpEndpoint:
             raise EndpointError(f"Connection error: {exc.reason}") from exc
         except TimeoutError as exc:
             raise EndpointError(f"Request timed out after {self.timeout}s") from exc
+        except UnicodeDecodeError as exc:
+            raise EndpointError("Endpoint returned non-UTF-8 JSON") from exc
+        except json.JSONDecodeError as exc:
+            raise EndpointError(f"Endpoint returned invalid JSON: {exc.msg}") from exc
+
+        if not isinstance(data, dict):
+            raise EndpointError(
+                f"Endpoint returned unexpected JSON type: {type(data).__name__}"
+            )
 
         # Normalise common LLM API response shapes
+        if "answer" in data:
+            return _build_response(data["answer"], data.get("sources", []))
         if "choices" in data:
-            return data["choices"][0]["message"]["content"]
+            return _build_response(
+                _extract_openai_content(data["choices"]),
+                data.get("sources", []),
+            )
         if "response" in data:
-            return data["response"]
+            return _build_response(data["response"], data.get("sources", []))
         if "text" in data:
-            return data["text"]
+            return _build_response(data["text"], data.get("sources", []))
         raise EndpointError(
             f"Unrecognised response shape; keys: {list(data.keys())}"
         )
+
+
+def _build_response(answer: object, sources: object) -> EndpointResponse:
+    if not isinstance(answer, str) or not answer.strip():
+        raise EndpointError("Endpoint returned an empty or non-string answer")
+
+    if sources is None:
+        sources = []
+
+    if not isinstance(sources, list) or any(
+        not isinstance(source, str) or not source.strip() for source in sources
+    ):
+        raise EndpointError("Endpoint returned invalid sources; expected list[str]")
+
+    return EndpointResponse(answer=answer, sources=sources)
+
+
+def _extract_openai_content(choices: object) -> str:
+    if not isinstance(choices, list) or not choices:
+        raise EndpointError("Endpoint returned invalid OpenAI-style choices payload")
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise EndpointError("Endpoint returned invalid OpenAI-style choices payload")
+
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise EndpointError("Endpoint returned invalid OpenAI-style choices payload")
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise EndpointError("Endpoint returned invalid OpenAI-style choices payload")
+
+    return content
