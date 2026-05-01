@@ -18,6 +18,7 @@ node_modules/
 # Local notes and report-generation workspace
 /docs/
 /report-gen/
+/Deployment Team Take Home Assignement 202604.docx
 
 # OS files
 .DS_Store

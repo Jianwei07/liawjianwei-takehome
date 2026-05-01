@@ -4,86 +4,96 @@ Submission for the HTX LLM/LMM AI R&D Deployment Team take-home assignment.
 
 ---
 
-## Repo structure
+## Repo Structure
 
-```
+```text
 .
-├── part-a/               Part A: System design (PDF source)
-│   └── system-design.md
-├── part-b/               Part B: LLM evaluation harness (runnable code)
-│   ├── harness/          Core library (scorer, runner, endpoint, CLI)
-│   ├── tests/            Unit tests (pytest)
-│   ├── sample_tests.jsonl
+├── part-a/               Part A: system design
+│   ├── system-design.md
+│   └── system-design.pdf
+├── part-b/               Part B: grounded evaluation service
+│   ├── data/             Knowledge base + eval suites
+│   ├── harness/          Runner, scorer, endpoint adapters, reporting
+│   ├── tests/            Backend and scoring tests
+│   ├── main.py           HTTP service entrypoint
 │   ├── pyproject.toml
-│   └── README.md         ← Start here for Part B
-├── part-c/               Part C: Opinion piece (PDF source)
-│   └── opinion.md
-└── report-gen/           PDF generation tooling (md-to-pdf via headless Chrome)
+│   └── README.md         Start here for Part B
+└── part-c/               Part C: opinion writeup
+    ├── opinion.md
+    └── opinion.pdf
 ```
 
 ---
 
 ## Part A — System Design
 
-**File:** [part-a/system-design.md](part-a/system-design.md)  
-**PDF:** generated via `report-gen` (see below)
+- Markdown: [part-a/system-design.md](part-a/system-design.md)
+- PDF: [part-a/system-design.pdf](part-a/system-design.pdf)
 
-Covers: architecture overview, key decisions + tradeoffs, post-deployment monitoring, and one production-only failure mode for a hybrid BM25 + dense vector RAG system serving ~2,000 documents to ~20 concurrent users on an air-gapped GPU cluster.
+Covers:
 
-An Eraser.io architecture diagram source is embedded at the bottom of the document.
+- architecture overview
+- key decisions and tradeoffs
+- post-deployment monitoring
+- one production-only failure mode
+
+The design targets a hybrid BM25 + dense retrieval RAG system serving roughly
+2,000 internal documents to about 20 concurrent users in an air-gapped
+environment.
 
 ---
 
-## Part B — Evaluation Harness
+## Part B — Grounded Evaluation Service
 
-**Directory:** [part-b/](part-b/)  
-**Full instructions:** [part-b/README.md](part-b/README.md)
+- Directory: [part-b/](part-b/)
+- Full instructions: [part-b/README.md](part-b/README.md)
 
-### Quick start
+### Quick Start
 
 ```bash
 cd part-b
-uv venv && uv pip install -e ".[dev]"
-source .venv/bin/activate
-eval-harness sample_tests.jsonl --verbose
+uv sync --extra dev
 uv run pytest tests/ -v
+uv run task dev
 ```
 
-Key design choices:
-- **Zero runtime dependencies** — stdlib only (`difflib`, `json`, `urllib`)
-- **Three scoring mechanisms**: exact match, keyword F1, sequence similarity
-- **Mock endpoint modes**: `fixed`, `echo`, `random`, `fail`, `timeout`
-- **CI-friendly**: exits with code 1 on any failure or error
-- **JSON output mode** for machine consumption
+In another terminal:
+
+```bash
+PART_B_DIR="$(git rev-parse --show-toplevel)/part-b"
+
+curl -sS -X POST http://127.0.0.1:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is the annual leave policy?"}'
+
+curl -sS -X POST http://127.0.0.1:8080/eval \
+  -o "$PART_B_DIR/positive.json"
+```
+
+Highlights:
+
+- service-only implementation, no separate CLI path
+- grounded answer contract: `answer` + `sources`
+- positive and diagnostic JSONL suites
+- abstention on unknown questions
+- structured eval summaries with failure buckets
 
 ---
 
 ## Part C — Opinion
 
-**File:** [part-c/opinion.md](part-c/opinion.md)  
-**PDF:** generated via `report-gen` (see below)
+- Markdown: [part-c/opinion.md](part-c/opinion.md)
+- PDF: [part-c/opinion.pdf](part-c/opinion.pdf)
 
-Three specific investigation strategies for stale/irrelevant answers 6 months post-deployment:
-1. Silent re-indexing failures (md5sum reconciliation)
-2. Retrieval recall regression (recall@5 evaluation against a golden set)
-3. Chunk boundary fragmentation on updated documents
+Focus areas:
+
+1. silent re-indexing failures
+2. retrieval recall regression
+3. chunk-boundary fragmentation after document updates
 
 ---
 
-## Generating PDFs
+## Notes
 
-PDFs for Parts A and C are produced with `md-to-pdf` (headless Chrome).
-
-```bash
-cd report-gen
-pnpm install        # first time only
-pnpm run build:all  # generates part-a/system-design.pdf + part-c/opinion.pdf
-```
-
-Individual builds:
-```bash
-pnpm run build:part-a   # part-a/system-design.pdf
-pnpm run build:part-c   # part-c/opinion.pdf
-```
-
-Requires Node.js ≥ 18 and pnpm. The `report-gen/` directory contains the CSS stylesheet and `md-to-pdf` configuration originally set up for a prior project; only the build scripts and footer have been updated for this submission.
+Personal notes, local tooling, and the assignment brief are intentionally not
+tracked in the repository.
