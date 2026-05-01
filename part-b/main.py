@@ -36,20 +36,25 @@ def _resolve_kb_path(path: str) -> str:
 
 
 def _resolve_eval_test_path(path: str, *, base_dir: Path) -> str:
-    candidate = Path(path).expanduser()
-    if not candidate.is_absolute():
-        candidate = base_dir / candidate
+    raw_path = Path(path).expanduser()
+    candidates = [raw_path] if raw_path.is_absolute() else [
+        _PART_B_DIR / raw_path,
+        base_dir / raw_path,
+    ]
 
-    resolved = candidate.resolve()
-    try:
-        resolved.relative_to(base_dir)
-    except ValueError as exc:
-        raise ValueError("tests must resolve inside the configured test directory") from exc
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(base_dir)
+        except ValueError:
+            continue
 
-    if resolved.suffix != ".jsonl":
-        raise ValueError("tests must point to a .jsonl file")
+        if resolved.suffix != ".jsonl":
+            raise ValueError("tests must point to a .jsonl file")
 
-    return str(resolved)
+        return str(resolved)
+
+    raise ValueError("tests must resolve inside the configured test directory")
 
 
 class HarnessHandler(BaseHTTPRequestHandler):
@@ -182,13 +187,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--kb",
-        default="sample_knowledge_base.jsonl",
-        help="JSONL knowledge base path (default: sample_knowledge_base.jsonl)",
+        default="data/knowledge_base.jsonl",
+        help="JSONL knowledge base path (default: data/knowledge_base.jsonl)",
     )
     parser.add_argument(
         "--tests",
-        default="sample_tests.jsonl",
-        help="JSONL test file path for POST /eval (default: sample_tests.jsonl)",
+        default="data/tests_positive.jsonl",
+        help="JSONL test file path for POST /eval (default: data/tests_positive.jsonl)",
     )
     args = parser.parse_args()
 

@@ -36,9 +36,9 @@ endpoint formats:
   https://host/path  real HTTPS endpoint
 
 examples:
-  eval-harness sample_tests.jsonl --endpoint kb:sample_knowledge_base.jsonl --verbose
-  eval-harness sample_tests.jsonl --endpoint mock:random --verbose
-  eval-harness sample_tests.jsonl --endpoint http://localhost:8080/generate --output json
+  eval-harness data/tests_positive.jsonl --endpoint kb:data/knowledge_base.jsonl --verbose
+  eval-harness data/tests_positive.jsonl --endpoint mock:random --verbose
+  eval-harness data/tests_positive.jsonl --endpoint http://localhost:8080/generate --output json
         """,
     )
     parser.add_argument("test_file", help="Path to JSONL test file")

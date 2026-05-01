@@ -14,7 +14,7 @@ The project stays intentionally small:
 - JSONL eval suites instead of a database or dashboard
 - structured JSON artifacts that can be saved after each run
 
-`sample_results.json` and `sample_results_diagnostic.json` are pre-generated artifacts so the output shape can be inspected without running anything.
+Bundled inputs live in `data/`. Generated eval outputs can be written to `results/`, which is gitignored.
 
 ---
 
@@ -26,7 +26,7 @@ Part A describes a grounded internal document Q&A system. Part B does not rebuil
 user query -> endpoint -> answer + cited sources -> eval summary
 ```
 
-`sample_knowledge_base.jsonl` stands in for indexed internal documents. `KnowledgeBaseEndpoint` performs simple keyword retrieval over those records and returns:
+`data/knowledge_base.jsonl` stands in for indexed internal documents. `KnowledgeBaseEndpoint` performs simple keyword retrieval over those records and returns:
 
 - an `answer`
 - a list of cited `sources`
@@ -69,7 +69,7 @@ AUTOMATED VERIFICATION
 
 HTTP EVAL FLOW
 ┌───────────────────────┐       ┌──────────────────────────────────────┐
-│ sample_tests*.jsonl   │       │ sample_knowledge_base.jsonl          │
+│ data/tests_*.jsonl    │       │ data/knowledge_base.jsonl            │
 │ queries + expected    │       │ simulated internal knowledge base    │
 └───────────┬───────────┘       └──────────────────┬───────────────────┘
             │                                      │
@@ -77,9 +77,9 @@ HTTP EVAL FLOW
 ┌──────────────────────────────────────────────────────────────────────┐
 │ uv run task dev -> main.py                                           │
 │ POST /generate -> KnowledgeBaseEndpoint -> answer + sources          │
-│ POST /eval     -> runner.run(sample_tests*.jsonl, KB) -> JSON        │
+│ POST /eval     -> runner.run(data/tests_*.jsonl, KB) -> JSON         │
 │ optional body for diagnostic suite:                                  │
-│   {"tests":"sample_tests_negative.jsonl"}                         │
+│   {"tests":"tests_diagnostic.jsonl"}                              │
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -106,7 +106,8 @@ HTTP EVAL FLOW
 
 CLI EVAL ARTIFACT FLOW
 ┌──────────────────────────────────────────────────────────────────────┐
-│ uv run eval-harness sample_tests.jsonl --endpoint kb:... --save ...  │
+│ uv run eval-harness data/tests_positive.jsonl --endpoint kb:...       │
+│   --save results/positive.json                                        │
 │ Same runner/scorer path, without starting the HTTP server            │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -135,8 +136,8 @@ This harness keeps those signals small and actionable without introducing heavy 
 
 The repo ships two suites.
 
-- `sample_tests.jsonl`: positive release-gating suite
-- `sample_tests_negative.jsonl`: diagnostic suite for robustness and grounding checks
+- `data/tests_positive.jsonl`: positive release-gating suite
+- `data/tests_diagnostic.jsonl`: diagnostic suite for robustness and grounding checks
 
 The positive suite is the acceptance gate.
 
@@ -219,7 +220,7 @@ It returns:
 Optional diagnostic suite override:
 
 ```json
-{ "tests": "sample_tests_negative.jsonl" }
+{ "tests": "tests_diagnostic.jsonl" }
 ```
 
 Routes:
@@ -336,25 +337,29 @@ Run the diagnostic suite through the backend:
 ```bash
 curl -s -X POST http://127.0.0.1:8080/eval \
   -H "Content-Type: application/json" \
-  -d '{"tests":"sample_tests_negative.jsonl"}'
+  -d '{"tests":"tests_diagnostic.jsonl"}'
 ```
+
+The `tests` override is restricted to the configured test directory, so the backend only accepts JSONL files from `part-b/data/` by default.
 
 Generate the same positive artifact from the CLI:
 
 ```bash
-uv run eval-harness sample_tests.jsonl \
-  --endpoint kb:sample_knowledge_base.jsonl \
+mkdir -p results
+
+uv run eval-harness data/tests_positive.jsonl \
+  --endpoint kb:data/knowledge_base.jsonl \
   --output json \
-  --save sample_results.json
+  --save results/positive.json
 ```
 
 Generate the diagnostic artifact from the CLI:
 
 ```bash
-uv run eval-harness sample_tests_negative.jsonl \
-  --endpoint kb:sample_knowledge_base.jsonl \
+uv run eval-harness data/tests_diagnostic.jsonl \
+  --endpoint kb:data/knowledge_base.jsonl \
   --output json \
-  --save sample_results_diagnostic.json
+  --save results/diagnostic.json
 ```
 
 No manual virtualenv activation is needed. `uv` reads `pyproject.toml`, installs the package, exposes the `eval-harness`, `eval-endpoint`, and `task` entrypoints, and runs commands inside the project environment.
@@ -363,13 +368,25 @@ No manual virtualenv activation is needed. `uv` reads `pyproject.toml`, installs
 
 ## Endpoint Modes
 
-- `kb:sample_knowledge_base.jsonl`: local simulated grounded endpoint for this submission
+- `kb:data/knowledge_base.jsonl`: local simulated grounded endpoint for this submission
 - `mock` or `mock:fixed`: always returns the same response
 - `mock:echo`: echoes the input query
 - `mock:random`: returns random HR-like keywords
 - `mock:fail`: simulates endpoint failure handling
 - `mock:timeout`: simulates timeout handling
 - `http://...` or `https://...`: calls a real endpoint, including the local `main.py` service
+
+---
+
+## Data Directory
+
+`data/` contains the small bundled dataset used by this take-home:
+
+- `knowledge_base.jsonl`: simulated internal documents
+- `tests_positive.jsonl`: release-gating checks
+- `tests_diagnostic.jsonl`: grounding and abstention probes
+
+`results/` is intentionally not committed. Use it for local eval artifacts generated from CLI or `/eval` runs.
 
 ---
 
@@ -382,11 +399,12 @@ part-b/
 ├── requirements.txt
 ├── README.md
 ├── main.py
-├── sample_knowledge_base.jsonl
-├── sample_tests.jsonl
-├── sample_tests_negative.jsonl
-├── sample_results.json
-├── sample_results_diagnostic.json
+├── data/
+│   ├── knowledge_base.jsonl
+│   ├── tests_positive.jsonl
+│   └── tests_diagnostic.jsonl
+├── results/
+│   └── .gitkeep
 ├── harness/
 │   ├── __init__.py
 │   ├── cli.py
