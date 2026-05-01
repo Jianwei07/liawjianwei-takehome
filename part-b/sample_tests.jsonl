@@ -1,0 +1,5 @@
+{"id": "q1", "input": "What is the annual leave policy?", "expected": "14 days annual leave"}
+{"id": "q2", "input": "Who approves travel claims?", "expected": "Direct manager"}
+{"id": "q3", "input": "What is the deadline for expense submissions?", "expected": "Within 30 days of incurring the expense"}
+{"id": "q4", "input": "What is the maximum meal reimbursement per day?", "expected": "50 dollars per day"}
+{"id": "q5", "input": "What is the IT helpdesk contact number?", "expected": "Extension 4357"}
