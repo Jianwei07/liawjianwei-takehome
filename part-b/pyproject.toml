@@ -11,9 +11,15 @@ dependencies = []
 
 [project.scripts]
 eval-harness = "harness.cli:main"
+eval-endpoint = "main:main"
+task = "main:task"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+
+[tool.setuptools]
+packages = ["harness"]
+py-modules = ["main"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
