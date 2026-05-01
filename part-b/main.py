@@ -70,6 +70,10 @@ class HarnessHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _log_event(self, message: str) -> None:
+        sys.stderr.write(f"[{self.log_date_time_string()}] {message}\n")
+        sys.stderr.flush()
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/health":
@@ -122,12 +126,15 @@ class HarnessHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Request must include a non-empty prompt"})
             return
 
+        self._log_event("generate start")
         try:
             response = self.endpoint.call(prompt)
         except EndpointError as exc:
+            self._log_event(f"generate error: {exc}")
             self._send_json(500, {"error": str(exc)})
             return
 
+        self._log_event(f"generate done sources={len(response.sources)}")
         self._send_json(200, {"answer": response.answer, "sources": response.sources})
 
     def _handle_eval(self) -> None:
@@ -147,21 +154,30 @@ class HarnessHandler(BaseHTTPRequestHandler):
                     base_dir=Path(self.test_file).resolve().parent,
                 )
             except ValueError as exc:
+                self._log_event(f"eval rejected: {exc}")
                 self._send_json(400, {"error": str(exc)})
                 return
 
+        suite_name = Path(test_file).name
+        self._log_event(f"eval start suite={suite_name}")
         try:
             summary = run(test_file, self.endpoint)
         except FileNotFoundError:
+            self._log_event(f"eval error suite={suite_name}: test file not found")
             self._send_json(
                 500,
                 {"error": f"Test file not found: {test_file!r}"},
             )
             return
         except ValueError as exc:
+            self._log_event(f"eval error suite={suite_name}: {exc}")
             self._send_json(400, {"error": str(exc)})
             return
 
+        self._log_event(
+            f"eval done suite={suite_name} passed={summary.passed}/{summary.total} "
+            f"failed={summary.failed} errors={summary.errors}"
+        )
         payload = summary_to_payload(summary)
         payload["test_file"] = test_file
         self._send_json(200, payload)

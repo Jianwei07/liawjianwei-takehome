@@ -32,4 +32,5 @@ Thumbs.db
 # Generated PDFs are intentionally not ignored because they are submission artifacts.
 
 # Part B generated eval outputs
-/part-b/results/*.json
+/part-b/positive.json
+/part-b/diagnostic.json

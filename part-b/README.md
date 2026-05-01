@@ -32,41 +32,72 @@ Start the local backend:
 uv run task dev
 ```
 
-In another terminal, ask one grounded question:
+Open a second terminal anywhere inside the repo. Use an explicit `PART_B_DIR`
+path so saved JSON always lands in `part-b/`.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/generate \
+PART_B_DIR="$(git rev-parse --show-toplevel)/part-b"
+```
+
+Positive example: grounded answer from `/generate`
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt":"What is the annual leave policy?"}'
 ```
 
-Save the positive eval summary as a JSON artifact:
+Neutral example: abstention from `/generate`
 
 ```bash
-mkdir -p results
-
-curl -s -X POST http://127.0.0.1:8080/eval \
-  -o results/positive.json
+curl -sS -X POST http://127.0.0.1:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is the dental benefits allowance?"}'
 ```
 
-Save the diagnostic eval summary as a JSON artifact:
+Negative/diagnostic example: eval summary with expected failures
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/eval \
+curl -sS -X POST http://127.0.0.1:8080/eval \
+  -H "Content-Type: application/json" \
+  -d '{"tests":"tests_diagnostic.jsonl"}'
+```
+
+Save the positive eval summary as a JSON artifact in `part-b/`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/eval \
+  -o "$PART_B_DIR/positive.json" && ls -lh "$PART_B_DIR/positive.json"
+```
+
+Save the diagnostic eval summary as a JSON artifact in `part-b/`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/eval \
   -H "Content-Type: application/json" \
   -d '{"tests":"tests_diagnostic.jsonl"}' \
-  -o results/diagnostic.json
+  -o "$PART_B_DIR/diagnostic.json" && ls -lh "$PART_B_DIR/diagnostic.json"
+```
+
+Watch the terminal running `uv run task dev` for progress logs like:
+
+```text
+[01/May/2026 15:12:01] eval start suite=tests_diagnostic.jsonl
+[01/May/2026 15:12:01] eval done suite=tests_diagnostic.jsonl passed=3/6 failed=3 errors=0
 ```
 
 Inspect the saved output:
 
 ```bash
-cat results/positive.json
-cat results/diagnostic.json
+cat "$PART_B_DIR/positive.json"
+cat "$PART_B_DIR/diagnostic.json"
 ```
 
 The `tests` override is restricted to the configured test directory, so the
 backend only accepts JSONL files from `part-b/data/` by default.
+
+Because the examples use `$(git rev-parse --show-toplevel)/part-b`, they work
+the same from the repo root or from inside `part-b/`.
 
 ## Expected Output
 
@@ -80,7 +111,10 @@ backend only accepts JSONL files from `part-b/data/` by default.
 ```
 
 `POST /eval` returns one structured JSON summary. `curl` prints it to stdout by
-default; `curl -o <file>` persists it as an artifact.
+default; `curl -o <file>` persists it as an artifact, so a successful request
+can look silent in the caller terminal while the JSON is written to disk.
+The examples above save directly to `part-b/positive.json` and
+`part-b/diagnostic.json`.
 
 ---
 
@@ -129,7 +163,7 @@ pyproject.toml
 ├─ uv run task dev               -> start backend on port 8080
 ├─ curl -X POST /generate        -> one grounded answer
 ├─ curl -X POST /eval            -> eval summary JSON
-└─ curl -o results/*.json        -> saved local artifacts
+└─ curl -o *.json                -> saved local artifacts
 
 AUTOMATED VERIFICATION
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -176,7 +210,7 @@ HTTP EVAL FLOW
 └───────────────────────────────┬──────────────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ stdout / results/*.json                                              │
+│ stdout / positive.json diagnostic.json                               │
 │ pass rate, grounding rate, failure buckets, anomalies, per-test rows │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -320,8 +354,8 @@ Fields:
 - `expected_sources`: acceptable cited source paths
 - `tags`: optional labels for filtering or inspection
 
-`results/` is intentionally not committed. Use it for local eval artifacts
-generated from `/eval` responses.
+`positive.json` and `diagnostic.json` are intentionally not committed. Generate
+them locally from `/eval` responses.
 
 ---
 
@@ -338,8 +372,6 @@ part-b/
 │   ├── knowledge_base.jsonl
 │   ├── tests_positive.jsonl
 │   └── tests_diagnostic.jsonl
-├── results/
-│   └── .gitkeep
 ├── harness/
 │   ├── __init__.py
 │   ├── endpoint.py
