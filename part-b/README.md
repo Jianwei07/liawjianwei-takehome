@@ -39,28 +39,12 @@ path so saved JSON always lands in `part-b/`.
 PART_B_DIR="$(git rev-parse --show-toplevel)/part-b"
 ```
 
-Positive example: grounded answer from `/generate`
+Check one grounded answer from `/generate`:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt":"What is the annual leave policy?"}'
-```
-
-Neutral example: abstention from `/generate`
-
-```bash
-curl -sS -X POST http://127.0.0.1:8080/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt":"What is the dental benefits allowance?"}'
-```
-
-Negative/diagnostic example: eval summary with expected failures
-
-```bash
-curl -sS -X POST http://127.0.0.1:8080/eval \
-  -H "Content-Type: application/json" \
-  -d '{"tests":"tests_diagnostic.jsonl"}'
 ```
 
 Save the positive eval summary as a JSON artifact in `part-b/`:
@@ -101,12 +85,36 @@ the same from the repo root or from inside `part-b/`.
 
 ## Expected Output
 
-`POST /generate` returns one answer payload:
+Positive response from `/generate`:
 
 ```json
 {
   "answer": "Employees receive 14 days annual leave per calendar year.",
   "sources": ["HR/2026/leave-policy.md"]
+}
+```
+
+Neutral response from `/generate` when the KB should abstain:
+
+```json
+{
+  "answer": "I don't know based on the provided documents.",
+  "sources": []
+}
+```
+
+Negative/diagnostic response from `/eval` is still a valid JSON summary, but it
+contains expected failures:
+
+```json
+{
+  "total": 6,
+  "passed": 3,
+  "failed": 3,
+  "errors": 0,
+  "failure_buckets": {
+    "source_mismatch": 3
+  }
 }
 ```
 
