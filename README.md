@@ -1,4 +1,4 @@
-# HTX AI Engineer Take-Home — Liau Jian Wei
+# AI Engineer Take-Home — Liaw Jian Wei
 
 Submission for the HTX LLM/LMM AI R&D Deployment Team take-home assignment.
 
