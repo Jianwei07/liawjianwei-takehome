@@ -1,7 +1,4 @@
-# AI Engineer Take-Home — Liaw Jian Wei
-
-Submission for the HTX LLM/LMM AI R&D Deployment Team take-home assignment.
-
+# AI Engineer Take-Home — Liaw Jian Wei (Jayden)
 ---
 
 ## Repo Structure
